@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-This repository provides tools and analytics for mutual fund / portfolio selection and performance analysis.
+A personal laboratory for investment research, strategy experimentation, backtesting, fund and stock selection, and trading workflows.
 
 ## Agent skills
 
