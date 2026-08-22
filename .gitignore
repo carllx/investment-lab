@@ -52,3 +52,18 @@ Thumbs.db
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
+
+# Generated Data, Reports, and Caches
+report/
+report2/
+**/report/
+**/report2/
+data/
+**/data/
+*.parquet
+*.duckdb
+*.h5
+*.hdf5
+*.sqlite3
+*.db
+
