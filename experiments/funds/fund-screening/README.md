@@ -54,10 +54,10 @@ pip install pandas requests aiohttp matplotlib seaborn scipy
 ```bash
 cd experiments/funds/fund-screening
 
-# 执行同步筛选流程
+# 执行同步筛选流程（主入口）
 python main.py
 
-# 或执行异步高并发筛选流程
+# 执行异步高并发拉取原型（需 aiohttp；适用于全量测试，需注意外部 API 频控）
 python main_aio.py
 ```
 
@@ -67,13 +67,13 @@ jupyter notebook notebooks/portfolio_selection.ipynb
 ```
 
 ## 6. 输出与生成数据
-运行后会在当前实验目录下生成 `report/` 文件夹（已配置 Git 忽略，不纳入版本控制）：
+运行后会在当前实验目录下生成 `report/` 文件夹（已配置 Git 忽略，不纳入版本控制；运行时会自动确保目录创建）：
 - `report/list_of_all_funds.csv`：全市场基金列表。
 - `report/overview/`：各基金详情 JSON 缓存。
 - `report/overview_filtered_manager.csv`：通过规模与经理筛选后的基金列表。
 - `report/rank/`：多周期同类排名数据缓存。
 - `report/rank.csv`：最终通过排名稳定性筛选并打分的精选基金列表。
 
-## 7. 维护状态
-- **状态**：历史基线实验（Baseline Archive）。
-- **后续规划**：在后续阶段中，底层数据抓取将逐步迁移至标准化数据提供者适配层（如 AkShare / DuckDB 存储）。
+## 7. 维护状态与定位
+- **定位**：进行中 / 活跃基金研究实验线（当前实现源自历史基线）。用于持续开展公募基金选品、经理画像刻画与配置策略实验。
+- **后续规划**：后续阶段中，底层数据抓取将逐步平滑接入规范的数据源适配（如 AkShare）及结构化缓存存储（DuckDB/Parquet）。

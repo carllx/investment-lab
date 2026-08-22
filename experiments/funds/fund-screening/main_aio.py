@@ -18,6 +18,7 @@ response = Query_list() # get a new 'list_of_all_funds.csv'
 data = re.sub(r"(\w+):", r'"\1":',  response)
 data = json.loads(data)
 # Write csv files 
+Path(PATH_ALL_FUNDS).parent.mkdir(parents=True, exist_ok=True)
 CSVheaders = "代码,基金,基金简称,日期,单位净值,累计净值,日增长率,近1周,近1月,近3月,近6月,近1年,近2年,近3年,今年来,成立来,成立日,,,,,,手续费,,"
 with open(PATH_ALL_FUNDS, 'w+', encoding='UTF8', newline='') as f:
     f.write(CSVheaders+'\n')
