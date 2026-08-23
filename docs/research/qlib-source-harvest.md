@@ -7,7 +7,7 @@
 - **Latest stable release tag**: `v0.9.7` (`da920b7f954f48ab1bb64117c976710de198373e`, 2025-08-15)
 - **Captured date**: 2026-08-23
 - **Target issue**: [#4 Evaluate Qlib for stock & factor experiments](https://github.com/carllx/investment-lab/issues/4)
-- **Status**: Read-only source harvest for Browser Guidance preparation (Phase 1A)
+- **Status**: Read-only source harvest for Browser Guidance preparation (Phase 1A - Review Fix)
 
 ---
 
@@ -48,7 +48,7 @@
 [Source Fact]  
 依据 `qlib/data/dataset/handler.py` 与 `qlib/data/dataset/__init__.py`：
 - **`DataLoader` (如 `QlibDataLoader`)**: 负责从底层存储中读取原始行情字段或通过表达式引擎计算基础特征与标签。
-- **`DataHandler` (如 `DataHandlerLP`)**: 负责协调 `DataLoader`，并管理两组可插拔的预处理器 `infer_processors` 与 `learn_processors`。通过 `fit_start_time` / `fit_end_time` 在指定时段（训练集）学习处理参数（如截面标准化、极值截断、缺失值填充），然后应用到全量数据。
+- **`DataHandler` (如 `DataHandlerLP`)**: 负责协调 `DataLoader`，并管理两组可插拔的预处理器 `infer_processors` 与 `learn_processors`。Qlib 提供了 `fit_start_time` / `fit_end_time` 接口参数，供支持参数拟合的 Processors 获取拟合区间。
 - **`Dataset` (如 `DatasetH`, `TSDatasetH`)**: 负责消费 `DataHandler` 处理后的数据，根据 `segments`（如 `train`, `valid`, `test`）切分时间窗口，并组装为模型所需的输入格式（例如 `DatasetH` 产出 2D 表格，`TSDatasetH` 产出 3D 滑动时序窗口 `(N, Time_step, Features)`）。
 
 ### 3. 数据层与模型的解耦
@@ -76,40 +76,54 @@
   - 时序平移：`Ref(X, d)`
   - 滚动统计：`Mean(X, d)`, `Std(X, d)`, `Max(X, d)`, `Min(X, d)`, `Quantile(X, d, q)`
   - 趋势与回归：`Slope(X, d)` (斜率), `Rsquare(X, d)` (拟合优度), `Resi(X, d)` (残差)
-  - 排序与截面：`Rank(X, d)`
+  - 滚动百分位排名：`Rank(X, N)`（**注意**：源码 `class Rank(Rolling)` 实现为单标的时序滚动百分位 `series.rolling(N).rank(pct=True)`，属于 Rolling Rank，而非截面排名）。
 - 表达式在底层进行语法解析并由高性能引擎执行，计算结果具备 Disk/Memory 缓存机制。
 
 ### 2. Alpha158 的作用与特征分类
 
+依据 `qlib/contrib/data/handler.py` 与 `qlib/contrib/data/loader.py`：
+
+#### A. Alpha158 默认 158 个特征组成 (Default Feature Composition)
 [Source Fact]  
-依据 `qlib/contrib/data/loader.py` 中的 `Alpha158DL.get_feature_config`：
-- **定位**: Qlib 官方提供的一套针对日线行情开源、高复现性的经典量价因子基准库（共 158 个特征）。
-- **特征构成**:
-  1. **Kbar 特征 (9个)**: 刻画单日 K 线的实体幅度、上下影线比例（如 `KMID`, `KLEN`, `KMID2`, `KUP`, `KUP2`, `KLOW`, `KLOW2`, `KSFT`, `KSFT2`）。
-  2. **Price 特征 (按 lag 窗口比值)**: `OPEN`, `HIGH`, `LOW`, `CLOSE`, `VWAP` 分别滞后 0~4 日除以当日收盘价（消除量纲）。
-  3. **Volume 特征 (按 lag 窗口比值)**: 成交量滞后 0~4 日除以当日成交量。
-  4. **Rolling 统计特征 (多尺度窗口 `[5, 10, 20, 30, 60]` 日)**:
-     - `ROC` (变动率 / 动量)
-     - `MA` (简单移动平均与收盘价比例)
-     - `STD` (滚动波动率与收盘价比例)
-     - `BETA` (滚动线性回归斜率)
-     - `RSQR` (线性回归趋势拟合优度)
-     - `RESI` (线性回归残差)
-     - `MAX` / `MIN` (区间极值相对比值)
-     - `QTLU` / `QTLD` (80% / 20% 分位数)
-     - `RANK` (当前价格在过去 $N$ 天的分位数排名)
-     - `RSV` (未成熟随机值)
-     - `CORR` / `CORD` (量价相关性 / 收益率与成交量变化相关性)
-     - `CNTP` / `CNTN` / `CNTD` (阳线天数、阴线天数统计)
-     - `SUMP` / `SUMN` / `SUMD` (上涨与下跌金额累计比值)
-     - `VMA`, `VSTD`, `WVMA` (成交量均线、成交量波动率、成交量加权移动均线)
+在 `qlib/contrib/data/handler.py` 中，`Alpha158.get_feature_config()` 显式传入固定配置：
+```python
+conf = {
+    "kbar": {},
+    "price": {
+        "windows": [0],
+        "feature": ["OPEN", "HIGH", "LOW", "VWAP"],
+    },
+    "rolling": {},
+}
+```
+其实际生成的 158 个特征构成为：
+1. **Kbar 特征 (9 个)**: 刻画单日 K 线的实体幅度、上下影线比例（`KMID`, `KLEN`, `KMID2`, `KUP`, `KUP2`, `KLOW`, `KLOW2`, `KSFT`, `KSFT2`）。
+2. **Price 特征 (4 个)**: 当日价格与收盘价比例（`OPEN0`, `HIGH0`, `LOW0`, `VWAP0`，即 `$open/$close`, `$high/$close`, `$low/$close`, `$vwap/$close`）。
+3. **Rolling 时序统计特征 (29 类算子 × 5 个窗口 `[5, 10, 20, 30, 60]` = 145 个)**:
+   - 动量与均线：`ROC` (变动率), `MA` (移动均线比例)
+   - 波动与回归：`STD` (滚动波动率), `BETA` (线性回归斜率), `RSQR` (拟合优度), `RESI` (回归残差)
+   - 极值与分位：`MAX` / `LOW` (区间最高/最低价), `QTLU` / `QTLD` (80%/20% 分位数), `RANK` (过去 N 天滚动百分位排名), `RSV` (未成熟随机值)
+   - 周期与极值时点 (Aroon 指标类)：`IMAX` (最高价距今距离), `IMIN` (最低价距今距离), `IMXD` (最高与最低时点差)
+   - 量价相关性：`CORR` (价格与对数成交量相关性), `CORD` (收益率与成交量变化率相关性)
+   - 涨跌统计：`CNTP` (上涨天数比例), `CNTN` (下跌天数比例), `CNTD` (涨跌天数差)
+   - 资金强度 (类似 RSI 结构)：`SUMP` (上涨金额比), `SUMN` (下跌金额比), `SUMD` (涨跌金额差比)
+   - 成交量与量价波动：`VMA` (成交量均线), `VSTD` (成交量波动率), `WVMA` (成交量加权价格波动率), `VSUMP` (成交量增加比), `VSUMN` (成交量减少比), `VSUMD` (成交量增减差比)
+- **合计**: $9 + 4 + 145 = 158$ 个特征。
+
+#### B. Alpha158DL 支持的可配置扩展选项 (Configurable Options / Docstring)
+[Source Fact]  
+`qlib/contrib/data/loader.py` 中的 `Alpha158DL.get_feature_config(config)` 提供了更通用的可配置接口，支持在调用时传入自定义参数扩展特征，例如：
+- 扩展 `price` 的历史滞后窗口（如 `windows: [0, 1, 2, 3, 4]`）；
+- 开启 `volume` 的历史滞后窗口（如 `windows: [0, 1, 2, 3, 4]`，计算 `VOLUME0`~`VOLUME4`）；
+- 通过 `include` / `exclude` 列表按需增删 rolling 算子。
+这些属于 `Alpha158DL` 的**可配置选项**，非 `Alpha158` 的**默认特征构成**。
 
 ### 3. 自定义 Factor / Feature 的入口
 
 [Source Fact]  
 1. **YAML / 配置直接注入**: 在 `DataHandler` 的 `config.feature` 列表中直接写入表达式字符串。
 2. **继承 DataLoader / DataHandler**: 类似 `Alpha158`，继承 `QlibDataLoader` 并重写 `get_feature_config` 返回特征字典。
-3. **扩展底层算子**: 在 `qlib/data/ops.py` 中继承 `ElemOperator` 或 `PairOperator` 注册新的时序/截面数学算子。
+3. **扩展底层算子**: 在 `qlib/data/ops.py` 中继承 `ElemOperator` 或 `PairOperator` 注册新的时序/数学算子。
 
 ---
 
@@ -123,17 +137,21 @@
 - **Validation 阶段** (如 `2015-01-01` ~ `2016-12-31`): 用于超参数调优、早停（Early Stopping）判断。
 - **Test 阶段** (如 `2017-01-01` ~ `2020-08-01`): 严格样本外（Out-of-Sample）盲测，用于输出模型最终预测信号并执行回测。
 
-### 2. 避免未来信息泄漏（Lookahead Bias）的设计
+### 2. 避免未来信息泄漏（Lookahead Bias）的设计与边界
 
 [Source Fact]  
 1. **标签对齐设计**:
    - `Alpha158` 官方默认标签定义为：
      `Ref($close, -2) / Ref($close, -1) - 1`
-   - `[Source Fact]`: `Ref(..., -1)` 为下一交易日（$T+1$），`Ref(..., -2)` 为再下一交易日（$T+2$）。这代表使用 $T$ 日收盘后生成的信号，在 $T+1$ 日以收盘价买入，并在 $T+2$ 日以收盘价卖出所获得的实际收益率。这天然避免了使用 $T$ 日盘中未知数据的未来偏差。
-2. **预处理 Fit-Transform 隔离**:
-   - `DataHandlerLP` 的 Processor `fit()` 仅在 `[fit_start_time, fit_end_time]` 上计算统计均值、方差或分位数，严禁在包含 Validation/Test 的全局数据上计算。
+   - `Ref(..., -1)` 为下一交易日（$T+1$），`Ref(..., -2)` 为再下一交易日（$T+2$）。这代表使用 $T$ 日收盘后生成的信号，在 $T+1$ 日以收盘价买入，并在 $T+2$ 日以收盘价卖出所获得的实际收益率。这天然避免了使用 $T$ 日盘中未知数据的未来偏差。
+2. **预处理区间传递机制**:
+   - Qlib 提供了 `fit_start_time` 与 `fit_end_time` 参数机制，Alpha handlers 会把这些参数传递给支持参数拟合的 Processors（如计算均值、方差、分位数截断等）。
+   - 官方 LightGBM + Alpha158 baseline 在配置中显式将该 fit 区间与 train 区间对齐。
 3. **Point-in-Time (PIT) 数据库支持**:
    - 依据 `docs/advanced/PIT.rst`，对于财务报表等多期修正、延迟披露的数据，Qlib 设计了记录披露日期（`date`）与报告期（`period`）的 PIT 索引，确保在历史任意回测截面获取的都是当时物理时间点已发布的最新数据版本。
+
+[Interpretation]  
+- Qlib 提供了支持防前视偏差的接口工具（如标签位移、`fit_start_time`/`fit_end_time` 与 PIT 数据库），正确使用这些配置可以有效避免常见的数据泄漏。但框架本身无法自动保证任意用户自定义配置或自定义 Processor 都不发生泄漏，防泄漏责任仍取决于研究者的实验配置严谨性。
 
 ---
 
@@ -162,14 +180,12 @@
 - **多空组合分析 (`ana_long_short=True`)**:
   将每日截面按预测得分由高到低分档，计算做多顶部分组（Long-Top）与做空底部分组（Short-Bottom）的多空年化收益率与多空夏普比率。
 
-### 3. 直观解释：为什么必须做 Signal Analysis 而不能只看最终回测收益？
+### 3. 直观解释：Signal Analysis 与最终回测收益的关系
 
 [Interpretation]  
-- **IC / Rank IC 检查的核心**: 模型预测排序与未来实际相对涨跌幅的纯粹相关性。它衡量的是**预测模型本身的有效性与信噪比**。
-- **为什么不能只看最终回测收益**:
-  1. **市场 Beta 与幸存者偏差**: 最终赚多少钱极易受到大盘走势、某只重仓大牛股偶然涨幅的干扰。单次回测收益高，可能是策略在牛市搭了便车或押中了离群点。
-  2. **过拟合与换手损耗混淆**: 一个低 IC 但回测收益高的策略，往往是过拟合了样本内的特定极端形态；反之，若一个策略 IC 很稳定（高 ICIR）但在回测中没赚钱，说明模型本身有预测力，瓶颈在于交易执行、调仓频率或手续费摩擦。
-  3. **定位问题**: Signal Analysis 帮助研究员清晰拆解“是模型预测不准”还是“交易策略设计不当”。
+- **IC / Rank IC 的核心作用**: 主要帮助观察预测分数与未来实际相对收益/排序之间是否存在稳定的统计关联，衡量的是模型纯粹的选股与排序能力。
+- **最终回测收益的复合性**: 最终回测收益不仅取决于预测信号质量，还复合了投资组合构建（如 Top-k 选股数量、权重分配）、市场宏观环境、换手率损耗、交易成本以及各类成交约束。
+- **分离分析的价值**: 两层分析适合分开看。当 IC 表现与最终回测收益出现不一致时（例如 IC 良好但回测收益不佳，或回测收益较高但 IC 接近 0），它为进一步排查是“模型预测能力问题”还是“交易执行/组合构建损耗”提供了关键线索。
 
 ---
 
@@ -184,7 +200,14 @@
   1. 设定持仓数量 `topk`（如 50 只）与每日最大替换数量 `n_drop`（如 5 只）。
   2. 对现有持仓按最新预测得分排序，得分最低的标的若跌出前列，将优先被选入卖出候选列表（最多卖出 `n_drop` 只）。
   3. 从未持仓且当前得分最高的标的中选出最多 `n_drop + (topk - 当前持仓数)` 只标的买入。
-  4. 支持 `hold_thresh` 参数（如最少持仓 1 天），在卖出时检查持股天数。
+- **持仓天数约束 (`hold_thresh`)**:
+  - `TopkDropoutStrategy` 提供了 `hold_thresh` 参数（默认值为 1），在卖出股票前检查当前持仓天数是否满足最小阈值（`current.get_stock_count(order.stock_id) >= self.hold_thresh`）。
+
+[Interpretation]  
+- `hold_thresh` 可以用于在策略层面表达最短持仓天数约束。
+
+[Open Question for investment-lab]  
+- `hold_thresh=1` 仅属于策略层的持仓天数过滤，并不等同于 Qlib 在所有 strategy / account / execution 路径下都严格实施了中国 A 股的 T+1 交易规则（即“当日买入股数当日冻结不可卖，仅前一交易日及之前持仓可用”）。该规则在非 TopkDropout 策略或复杂执行环境下的行为必须由 investment-lab 通过 Spike 实测验证。
 
 ### 2. 交易假设与执行环境支持度 (`Exchange` 模块)
 
@@ -207,7 +230,7 @@
 | **整手交易 (100股)** | `[Verified]` 支持（通过 `trade_unit=100` 与 `$factor` 取整） | 复权价格折算在极端拆股送股时是否产生碎股尾差 |
 | **涨跌停限制** | `[Verified]` 支持静态涨跌停禁止买卖 | 注册制（20% 涨跌停）、科创板/北交所、ST (5%) 差异化动态涨跌停 |
 | **停牌不可交易** | `[Verified]` 支持（NaN `$close` 判定为停牌） | 长期停牌标的复牌补跌时持仓净值突变对风控的影响 |
-| **T+1 交易规则** | `[Verified]` 策略层支持 `hold_thresh=1`（持仓天数检查） | 账户层（Account/Position）是否严格区分当日可用余额与冻结持仓 |
+| **T+1 交易规则** | `[Reported]` 仅在 `TopkDropoutStrategy` 策略层提供 `hold_thresh=1` 持仓天数检查 | 账户层（Account/Position）是否严格区分当日可用余额与冻结持仓；非 Topk 策略下的 T+1 行为 |
 | **分红送转与派息** | `[Verified]` 依赖离线除权因子 `$factor` 调整价格 | 回测中分红现金是否动态注入 `cash` 账户，还是仅以纯资本利得计价 |
 | **历史印花税变动** | `[Verified]` 仅支持全局固定单一 `close_cost` 费率 | 需验证是否能根据历史时间分段应用不同印花税率（如 2023 年 8 月减半） |
 
@@ -321,14 +344,14 @@ task:
 
 1. **时序与截面双重解耦**:
    - 因子计算在时序维度（Rolling / Elem Operator）完成；
-   - 因子检验与数据预处理在截面维度（Cross-sectional Normalization / IC 计算）完成；
-   - 避免在特征生成阶段过早混入截面统计量，确保并行与可缓存性。
+   - 截面数据预处理与信号检验在截面维度（Cross-sectional Normalization / IC 统计）完成；
+   - 避免在底层特征生成阶段过早混入截面统计量，确保数据加载的并行性与缓存复用。
 2. **两阶段评估哲学 (Signal-Level vs. Portfolio-Level)**:
-   - 先用 `SigAnaRecord` (IC, Rank IC, ICIR) 评估纯粹预测能力与排序信噪比；
-   - 只有信号通过统计检验后，再进入 `PortAnaRecord` (TopkDropout / 优化器回测) 评估交易成本、滑点与资金容量。
+   - 先通过 `SigAnaRecord` (IC, Rank IC, ICIR) 观察预测信号的纯粹排序能力与信噪比；
+   - 信号具备统计基础后，再进入 `PortAnaRecord` (TopkDropout / 优化器回测) 评估组合构建、换手率与交易摩擦。
 3. **严格的防未来信息泄漏设计**:
    - 标签定义必须明确时序位移（如 $T$ 日信号对应 $T+1$ 到 $T+2$ 的收益）；
-   - Processor 的拟合区间（`fit_start_time` ~ `fit_end_time`）必须与训练集严格重合。
+   - 预处理器的拟合区间（`fit_start_time` ~ `fit_end_time`）应与训练集对齐，避免全样本统计量泄漏。
 
 ---
 
@@ -355,9 +378,9 @@ task:
 | :--- | :--- | :--- | :--- |
 | **量化流程与四层架构** | `docs/introduction/introduction.rst` | `79633dd` | 官方四层架构定义与量化闭环流程描述 |
 | **数据层与文件存储** | `docs/component/data.rst` | `79633dd` | `.bin` 格式、`dump_bin.py`、DataLoader/DataHandler 结构 |
-| **Alpha158 特征库** | `qlib/contrib/data/loader.py` | `79633dd` | `Alpha158DL.get_feature_config` 中 158 个因子与标签定义 |
-| **表达式引擎算子** | `qlib/data/ops.py` | `79633dd` | 时序滚动、极值、分位数、线性回归斜率与残差等算子定义 |
-| **Processor 防未来泄露** | `qlib/data/dataset/handler.py` | `79633dd` | `DataHandlerLP` 的 `fit_start_time` / `fit_end_time` 隔离实现 |
+| **Alpha158 特征库** | `qlib/contrib/data/handler.py` & `qlib/contrib/data/loader.py` | `79633dd` | `Alpha158` 默认配置 (Kbar 9 + Price 4 + Rolling 145 = 158) 及标签定义 |
+| **表达式引擎算子** | `qlib/data/ops.py` | `79633dd` | 时序滚动算子、`Rank(X, N)`（Rolling Rank）等算子定义 |
+| **Processor 防未来泄露** | `qlib/data/dataset/handler.py` | `79633dd` | `DataHandlerLP` 的 `fit_start_time` / `fit_end_time` 机制接口 |
 | **PIT 财报时点数据库** | `docs/advanced/PIT.rst` | `79633dd` | 针对财报修正的时点数据防泄漏存储规范 |
 | **IC / Rank IC 算法** | `qlib/contrib/eva/alpha.py` | `79633dd` | `calc_ic` 中 Pearson IC、Spearman Rank IC 与 ICIR 实现 |
 | **信号记录与分析器** | `qlib/workflow/record_temp.py` | `79633dd` | `SignalRecord` 与 `SigAnaRecord` 的依赖关系与输出指标 |
