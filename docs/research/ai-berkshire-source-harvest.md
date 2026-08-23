@@ -29,8 +29,8 @@
 [Source Fact]
 依据 `README.md`（lines 161–175）与 `AGENTS.md`（lines 6–24），`ai-berkshire` 采用三层架构：
 1. **Skill 层（20 个工作流入口）**：定义面向特定投研场景的端到端指令，规范输入参数、前置偏见检查、研究动作分解与输出格式。`skills/*.md` 是全仓库的 Canonical Workflow 唯一信源。
-2. **Agent 层（并行调度与多视角对抗）**：在复杂场景（如 `/investment-team`, `/earnings-team`, `/news-pulse`）通过 Team Lead 调度 4–6 个子 Agent 并行执行独立检索、独立评估与交叉挑战；轻量级技能（如 `/quality-screen`, `/news-pulse`）则支持直连工具单 Agent 运行。
-3. **工具层（确定性计算与质量准出）**：基于 Python 标准库构建零外部依赖的计算与审计工具（`tools/financial_rigor.py`, `tools/terminal_value.py`, `tools/report_audit.py` 等），承担精确十进制验算、多源交叉对比、永续增长终值约束审计与发布前 15% 随机抽检。
+2. **Agent 层（并行调度与多视角对抗）**：在复杂场景（如 `/investment-team`, `/earnings-team`, `/news-pulse`）通过 Team Lead 调度 4–6 个子 Agent 并行执行独立检索、独立评估与交叉挑战；轻量级技能（如 `/quality-screen`）则支持直连工具单 Agent 运行。
+3. **工具层（确定性计算与质量准出）**：基于 Python 标准库构建零外部依赖的计算与审计工具（`tools/financial_rigor.py`, `tools/terminal_value.py`, `tools/report_audit.py` 等），承担十进制数值验算、多源交叉对比、永续增长终值约束审计与发布前 15% 随机抽检。
 
 [Source Fact]
 依据 `scripts/sync-codex-skills.py`（lines 64–90）与 `AGENTS.md`（lines 26–41）：
@@ -89,13 +89,18 @@
 ### 2. 双源交叉验证与容差规则
 
 [Source Fact]
-依据 `skills/financial-data.md`（lines 67–78）及 `tools/financial_rigor.py`（lines 180–218）：
-- 误差计算公式：
-  $$\text{Error Rate} = \frac{|\text{Source}_1 - \text{Source}_2|}{\text{Source}_1} \times 100\%$$
-- **容差分级处置**：
-  - $\le 1\%$：判定一致（✅），采纳主源数值，报告中显式列出两源数据与误差比率；
-  - $1\% \sim 5\%$：标记存在差异（⚠️），必须在报告中说明口径差异原因（如 GAAP vs Non-GAAP、汇率折算时点、财年定义、少数股东权益）；
-  - $> 5\%$：标记重大差异（❌），严禁直接引用第三方数据，必须直接查阅原始披露文件（10-K/年报）进行仲裁。
+在交叉验证的具体阈值设定上，文档规范政策与工具代码默认实现存在口径差异，不可混为一谈：
+1. **文档规范政策 (`skills/financial-data.md:L67-78`)**：
+   - 两源相对误差公式：
+     $$\text{Error Rate} = \frac{|\text{Source}_1 - \text{Source}_2|}{\text{Source}_1} \times 100\%$$
+   - **容差分级处置**：
+     - $\le 1\%$：判定一致（✅），采纳主源数值，报告中显式列出两源数据与误差比率；
+     - $1\% \sim 5\%$：标记存在差异（⚠️），必须在报告中说明口径差异原因（如 GAAP vs Non-GAAP、汇率折算时点、财年定义、少数股东权益）；
+     - $> 5\%$：标记重大差异（❌），严禁直接引用第三方数据，必须直接查阅原始披露文件（10-K/年报）进行仲裁。
+2. **工具代码默认实现 (`tools/financial_rigor.py:L180-218`)**：
+   - `cross_validate()` 函数的默认容差参数为 `tolerance_pct = 2.0`（2% 容差）；
+   - 计算方式为相对于中位数的偏差：$\text{dev} = \frac{|\text{val} - \text{median}|}{\text{median}} \times 100\%$；
+   - 当所有来源 $\text{dev} \le 2.0\%$ 时输出 ✅ 数据一致；存在任一来源 $\text{dev} > 2.0\%$ 时输出 ⚠️ 存在来源偏差警告。
 
 ### 3. 信息丰富度评级（A/B/C）与虚假确定性防御
 
@@ -106,7 +111,7 @@
 - **C 级（信息稀缺）**：冷门股、初创企业。防御“数据多=确定性高，数据少=公司不好”的认知偏差。转入第一性原理提问（客户、复购、100 亿复制成本、关键决策），禁止为迎合报告格式而拼凑虚假数据。
 
 [Durable Research Method]
-- 建立“信息丰富度分级”与“双源交叉校验（1% 容差）”是任何 AI 投研系统都应长期采纳的证据纪律，能够从机制上扼杀 AI 编造财务数据与将共识当真理的倾向。
+- 建立“信息丰富度分级”与“双源交叉校验与分级容差控制”是任何 AI 投研系统都应长期采纳的证据纪律，能够从机制上扼杀 AI 编造财务数据与将共识当真理的倾向。
 
 ---
 
@@ -115,8 +120,8 @@
 ### 1. 消除浮点误差与手动验算纪律
 
 [Source Fact]
-依据 `tools/financial_rigor.py`（lines 24–105）：
-- 所有财务计算强制使用 Python 标准库 `decimal.Decimal`（`Context(prec=28, rounding=ROUND_HALF_EVEN)`），彻底禁用 Python 原生 `float`，防止浮点数精度漂移。
+依据 `tools/financial_rigor.py`（lines 24–105, 180–218）：
+- 核心金额与部分关键估值指标运算使用 Python 标准库 `decimal.Decimal`（`Context(prec=28, rounding=ROUND_HALF_EVEN)`）以降低十进制精度问题与累积舍入误差；但源码在格式化输出（`fmt_number` 中的 `float(d)`）、偏差百分比计算（`deviation = abs(float(calculated - r) / float(r)) * 100`）、中位数计算（`sorted(float(v) for v in nums)`）及部分内部换算位置仍显式转换并使用原生 `float`。
 - **市值强制验算**：必须输入当前股价 $P$ 与最新总股本 $S$，由脚本严格计算 $P \times S$ 并与外部报告市值对比。若偏差 $>5\%$ 触发硬告警（检查股本稀释/回购、AB 股双重股权结构、不同市场币种混淆）。
 
 [Source Fact]
@@ -127,24 +132,27 @@
   - 后复权：用于计算历史真实年化回报（含分红再投资）；
   - 严禁在同一分析中混用不同复权口径。
 
-### 2. 永续增长模型（Terminal Value）的三大硬约束
+### 2. 永续增长模型（Terminal Value）与经验约束
 
 [Source Fact]
 依据 `skills/investment-research.md`（lines 173–238）与 `tools/terminal_value.py`（lines 1–238）：
-十年期稳态退出估值严禁使用同业类比（避免将当前市场整体高估引入终值），必须采用永续增长公式：
+十年期稳态退出估值严禁使用同业类比（避免将当前市场整体高估引入终值），采用永续增长公式：
 $$PE_{\text{终值}} = \frac{1 - g/\text{ROIC}}{r - g}$$
 其中 $1 - g/\text{ROIC}$ 为稳态派息率（$g/\text{ROIC}$ 为维持永续增速 $g$ 所需留存的资本比例），$r - g$ 为永续折现利差。
 
-在将估值写入报告前，`tools/terminal_value.py audit` 强制执行三条硬约束准出检查（违背任一条直接打回）：
+在将估值写入报告前，`tools/terminal_value.py audit` 执行三条约束准出检查：
 1. **约束 C1：资本成本 $r$ 与永续增速 $g$ 必须同币种匹配**：
    - 人民币口径：$r \in [6\%, 9\%]$（基准国债 $1.70\%$ + ERP），永续增速基准 $g \le 2.0\%$（长期名义 GDP 约束）；
    - 美元/港币口径：$r \in [9\%, 11.5\%]$（基准国债 $4.70\%$ + ERP），永续增速基准 $g \le 4.0\%$。
    - 严禁用人民币的折现率配美元的增速，或用美元的高折现率配过低的人民币增速。
 2. **约束 C2：分母利差 $r - g \ge 5\text{ 个百分点}$（有效性下限）**：
-   - 当 $r - g < 5\%$ 时，永续增长模型对 $g$ 的微小变动极度敏感，估值会急剧发散，属于放大偏见而非理性定价；$r - g \le 0$ 时模型直接失效。
-3. **约束 C3：离散风险（如退市、VIE 结构失效、地缘断供、行业毁灭性监管）严禁折算进折现率 $r$ 或 $\beta$**：
-   - **理论依据**：提高折现率 $r$ 对第 10 年现金流的惩罚是第 1 年的 2.6 倍以上，而退市或地缘风险是均匀甚至前置的年度危害率（Hazard Rate）。在折现率中叠加风险溢价会**系统性颠倒风险在时间维度上的分布**。
-   - **合规做法**：离散风险必须在情景分析中设立独立的“尾部情景档”并赋予发生概率。
+   - 当 $r - g < 5\%$ 时，永续增长模型对 $g$ 的微小变动极度敏感，估值会急剧发散；$r - g \le 0$ 时模型直接失效。
+3. **约束 C3：离散风险（如退市、VIE 结构失效、地缘断供、行业毁灭性监管）不得直接折算进折现率 $r$ 或 $\beta$**：
+   - **作者经验理由**：提高折现率 $r$ 对第 10 年现金流的惩罚是第 1 年的 2.6 倍以上，而退市或地缘风险是均匀甚至前置的年度危害率（Hazard Rate）。在折现率中简单叠加风险溢价会扭曲风险的时间分布。
+   - **做法**：离散风险建议在情景分析中设立独立的“尾部情景档”并赋予发生概率。
+
+[Interpretation]
+- `tools/terminal_value.py` 自身明确说明（lines 12–22, 74–103），上述纪律与参数区间均来自特定“7公司10年投资价值横评”报告（2026-08）的经验总结与实测参数。因此，不能将具体的数值门槛（如 5% 分母利差、特定货币的利率区间）上升为普遍适用的金融硬规则。
 
 ### 3. 报告数据抽检准出机制（Report Audit Gate）
 
@@ -155,8 +163,21 @@ $$PE_{\text{终值}} = \frac{1 - g/\text{ROIC}}{r - g}$$
   - **准出（PASS）**：所有抽检数据点相对偏差 $\le 1\%$；
   - **打回（FAIL）**：存在任意一个数据点偏差 $>1\%$，必须修正报告对应数据后重新抽检，直至完全准出。
 
+### 4. 金融严谨性层面的方法论分级
+
 [Durable Research Method]
-- “Decimal 精确计算”、“复权口径统一”、“永续增长三约束（同币种匹配、5% 最小分母利差、离散风险禁止进折现率）”以及“发布前 15% 随机抽样准出”具有极高的金融工程严谨性，属于跨流派通用的硬核资产。
+- **参数口径一致性**：折现率与永续增长率在币种、通胀与时间尺度上保持严格一致；
+- **显式敏感性分析与假设暴露**：在报告中公开资本成本、稳态 ROIC、永续增速等底层假设，并检验相对排序在敏感性扰动下的稳定性；
+- **风险按性质显式建模**：区分连续波动风险与离散尾部事件（地缘/违约/政策），显式以情景档与概率呈现，而非暗箱揉入单一参数；
+- **独立验证/抽检作为质量门禁原则**：定稿前由独立于生成的流程进行数据抽验准出。
+
+[Author Preference / Heuristic] 或 [Implementation-Specific]
+- 分母利差 $r - g \ge 5\%$ 的硬性下限判定；
+- C1/C2/C3 的具体代码打回与参数拦截形式；
+- 15% 随机抽样比例与 1% 准出容差。
+
+[Version-Specific]
+- `terminal_value.py` 中 2026 年特定时点的无风险利率与 ERP 数值（如中国国债 1.70%、美国国债 4.70%、ERP 5.18%）。
 
 ---
 
@@ -250,14 +271,11 @@ $$PE_{\text{终值}} = \frac{1 - g/\text{ROIC}}{r - g}$$
 ### 1. 多 Agent 并行投研机制分析
 
 [Source Fact]
-依据 `skills/investment-team.md`（lines 1–230）与 `skills/earnings-team.md`（lines 1–445）：
+依据 `skills/investment-team.md`（lines 1–230）, `skills/earnings-team.md`（lines 1–445）, `skills/news-pulse.md`（lines 1–110）：
 - **团队构成与分工**：
-  - `team-lead`：总协调、冲突裁决与报告定稿；
-  - `business-analyst`（段永平视角）：聚焦商业模式、用户价值与护城河；
-  - `financial-analyst`（巴菲特视角）：聚焦三张表质量、现金流真实性与估值安全边际；
-  - `industry-researcher`（芒格视角）：聚焦行业格局、竞争威胁与逆向失败路径；
-  - `risk-assessor`（李录视角）：聚焦管理层诚信、附注隐藏风险与长期文明演进；
-  - `earnings-team` 额外引入 `editor`（面向公众表达润色）与 `reader-reviewer`（普通投资者挑刺）。
+  - `investment-team`：`team-lead` 总协调与裁决；`business-analyst`（商业模式/护城河）；`financial-analyst`（财务质量/估值）；`industry-researcher`（行业格局/逆向风险）；`risk-assessor`（管理层/附注风险）；
+  - `earnings-team`：在四大师研究视角基础上，额外引入 `editor`（面向公众表达润色）与 `reader-reviewer`（普通投资者挑刺）；
+  - `news-pulse`：`company-event-scout`（公司本体事件）；`regulatory-watcher`（监管与政策）；`industry-peer-analyst`（行业与对手）；`sentiment-tracker`（市场情绪与卖方/大V）。
 
 ### 2. 多 Agent 架构的实质价值来源评估
 
@@ -265,12 +283,12 @@ $$PE_{\text{终值}} = \frac{1 - g/\text{ROIC}}{r - g}$$
 基于源码事实，对多 Agent 的真实价值与成本进行客观评估：
 
 1. **真实价值点**：
-   - **并发上下文隔离（Context Window Decoupling）**：单 Agent 串行检索易导致上下文溢出、注意力稀释或提前得出结论；4 个 Agent 并行各跑独立的 Web 检索与数据提取，有效扩大了信息捕获半径。
+   - **并发上下文隔离（Context Window Decoupling）**：单 Agent 串行检索易导致上下文溢出、注意力稀释或提前得出结论；多个 Agent 并行各跑独立的 Web 检索与数据提取，有效扩大了信息捕获半径。
    - **提示词引导的专业视角分化**：财务 Agent 强制调用 `financial_rigor.py` 验算，风险 Agent 专门扫描诉讼与附注，使各子任务聚焦于专用领域，避免泛泛而谈。
-   - **共识与矛盾显式暴露**：Team Lead 的核心职责是提取各视角的冲突（例如巴菲特视角认为估值极低，而李录视角认为管理层不可信；段永平视角看好商业模式，而芒格视角指出竞争对手正在快速侵蚀），这种冲突揭示了决策的核心张力。
+   - **共识与矛盾显式暴露**：Team Lead 的核心职责是提取各视角的冲突（例如财务视角认为估值极低，而风险视角认为管理层不可信；商业模式视角看好长期价值，而行业视角指出竞争对手正在快速侵蚀），这种冲突揭示了决策的核心张力。
 2. **形式化过度与局限（Persona Theater）**：
-   - **角色包装大于实质隔离**：4 个 Agent 均使用相同的底层通用模型（`general-purpose`），其“大师视角”主要依赖 System Prompt 的人格化设定（穿插语录点评）。如果没有差异化的数据输入或专有工具，容易沦为人格化表演。
-   - **Token 消耗与冗余检索**：4 个 Agent 独立搜索同一家公司时，存在大量重复抓取（如重复抓取同一份财报基本数据）。
+   - **角色包装大于实质隔离**：子 Agent 均使用相同的底层通用模型（`general-purpose`），其“大师视角”主要依赖 System Prompt 的人格化设定（穿插语录点评）。如果没有差异化的数据输入或专有工具，容易沦为人格化表演。
+   - **Token 消耗与冗余检索**：多个 Agent 独立搜索同一家公司时，存在大量重复抓取（如重复抓取同一份财报基本数据）。
    - **权限静默退化风险**：`investment-team.md`（lines 34–48）指出，当后台 Agent 缺失 WebSearch 权限时，由于无法交互式确认，会静默退化为基于陈旧训练知识作答，生成虚假的“深度报告”。
 
 [Durable Research Method] vs [Implementation-Specific]
@@ -303,7 +321,7 @@ flowchart TD
 
     subgraph S3["3. 持仓维护与持续跟踪 (Post-Purchase Monitoring)"]
         ER["/earnings-review<br>(单季一手财报精读)"]
-        NP["/news-pulse<br>(股价异动快速归因)"]
+        NP["/news-pulse<br>(股价异动快速归因 - 4 Agent)"]
         TT["/thesis-tracker<br>(核心假设持续跟踪)"]
         TD["/thesis-drift<br>(论文漂移事实比对)"]
         PR["/portfolio-review<br>(组合集中度与再平衡)"]
@@ -336,10 +354,10 @@ flowchart TD
 | 方法 / 机制 | Primary Source | Durable? | Style-specific? | Implementation-specific? | Potential `investment-lab` Use | Risk / Caveat |
 |---|---|:---:|:---:|:---:|---|---|
 | **信息丰富度分级 (A/B/C) 与留白原则** | `investment-research.md:L9-34` | **YES** | 否（通用） | 部分（A/B/C 划分） | 制定 Agent 基本面研究的数据置信度前置门禁 | 防止 AI 将冷门/数据少直接误判为“不合格” |
-| **多源财务交叉验证 (<1% 容差)** | `financial-data.md:L61-98`, `financial_rigor.py:L180` | **YES** | 否（通用） | 是（指定了具体爬虫与数据站） | 制定统一的资产数据接入与校验标准规范 | 需适配本地可用数据源（如聚宽、Tushare、本地 Parquet） |
-| **精确十进制运算与市值验算** | `financial_rigor.py:L28,74` | **YES** | 否（通用） | 否（纯 Python 标准库） | 投研工具库强制采用 Decimal 消除浮点误差与单位混淆 | 无 |
-| **永续增长估值三硬约束 (C1/C2/C3)** | `terminal_value.py:L11-23,124-138` | **YES** | 否（适用于所有 DCF/终值模型） | 否（金融数学逻辑） | 估值与资产定价模型中的参数合规性校验引擎 | 早期未盈利或强周期企业需适配不同终值模型 |
-| **发布前 15% 随机抽样准出 (Audit Gate)** | `report_audit.py:L246-286` | **YES** | 否（通用质量工程） | 是（正则表达式解析 md 表格） | 投研报告与回测分析自动化质检准出流程 | 正则解析依赖 Markdown 固定排版格式 |
+| **多源财务交叉验证与容差控制** | `financial-data.md:L61-98`, `financial_rigor.py:L180` | **YES (原则)** | 否（通用） | 是（文档规范 1% / 工具默认 2%，指定具体网站） | 制定统一的资产数据接入与校验标准规范 | 需区分文档 1% 与代码 2% 的口径差异，并适配本地数据源 |
+| **核心金额十进制运算与市值验算** | `financial_rigor.py:L28,74` | **YES** | 否（通用） | 是（核心计算用 Decimal，展示与统计部分转 float） | 投研工具库采用 Decimal 降低浮点误差与单位混淆 | 注意源码在格式化与偏差计算中仍有 float 转换，并非全流程零 float |
+| **永续增长估值框架与假设暴露** | `terminal_value.py:L11-23,124-138` | **YES (口径一致/假设暴露/敏感性分析)** | 否（通用估值逻辑） | 是 (r-g>=5%、具体 CNY/USD bands、C1-C3 硬打回) | 估值模型参数一致性校验与假设显式化 | 具体 5% 阈值与币种 bands 来自作者横评经验，不能作为通用硬规则 |
+| **发布前数据抽检准出原则 (Audit Gate)** | `report_audit.py:L246-286` | **YES (独立抽检门禁原则)** | 否（通用质量工程） | 是 (15% 抽样、1% PASS 阈值、md 表格正则解析) | 投研报告与回测分析自动化质检准出流程 | 15% 与 1% 属经验取值，正则解析依赖固定排版 |
 | **承诺 vs 兑现追踪 (Say-Do Tracker)** | `management-deep-dive.md:L74-91` | **YES** | 否（通用） | 否（结构化表格） | 管理层研究、基金经理尽调、分析师预测质量追踪 | 历史承诺文本抓取的完整性依赖数据源覆盖 |
 | **物理供应链分层瓶颈扫描** | `bottleneck-hunter.md:L56-132` | **YES** | 否（产业逻辑） | 否（分层分析法） | 产业链研究、主题投资挖掘、风险传导分析 | 需行业专家先验知识校准实体层级 |
 | **投资论文增量漂移检测 (Improved/Unchanged/Weakened)** | `thesis-drift.md:L92-115` | **YES** | 否（通用） | 否（三值状态机） | 策略/持仓定期跟踪，区分价格波动与基本面恶化 | 需先建立标准化的初始假设基线 |
@@ -366,7 +384,7 @@ flowchart TD
 5. **强耦合的本地路径与工具链绑定（Hardcoded Tooling & Local Paths）**：
    - 上游代码强绑定 `~/ai-berkshire/tools/...` 绝对路径，且深度依赖特定外部网站的网页结构（如 aastocks、macrotrends），容错性较弱。
 6. **自媒体发布工作流（Content Publishing Pipeline）**：
-   - 编辑 Agent（公众号改写）与读者评审 Agent（可读性挑刺）服务于面向 C 端的自媒体分发，与 investment-lab 面向专业量化、策略回测与资产配置的定位无关。
+   - 公众号编辑、传播与读者评审属于内容发布 pipeline，不是当前 investment-lab 投资研究方法与实验基础设施的核心需求。
 
 ---
 
@@ -387,7 +405,7 @@ flowchart TD
 - **核心定位**：量化追踪管理层“言行一致性（承诺兑现率）”、历史重大并购整合回报、回购时机合理性与股权稀释治理。
 
 ### 5. `financial-rigor`（金融计算与数据验证标准工具库）
-- **核心定位**：沉淀 Decimal 精确计算、市值交叉核算、永续增长终值约束审计（C1/C2/C3）、报告发布前 15% 随机抽检等确定性 Python 工具。
+- **核心定位**：沉淀 Decimal 核心金额计算、市值交叉核算、永续增长终值约束审计、报告发布前数据抽检等确定性 Python 工具。
 
 ---
 
@@ -396,7 +414,7 @@ flowchart TD
 1. **数据源本地化与合规性**：
    - `ai-berkshire` 依赖 curl 直连海外/公开网站（如 Macrotrends, Yahoo, 东方财富）。`investment-lab` 是否应封装统一的 `DataProvider` 接口，优先读取本地量化数据库（如 Qlib bin、Parquet、DuckDB 或本地 API），仅在数据缺失时调用 WebSearch 补充？
 2. **多 Agent 协作的成本效益比**：
-   - 在真实投研环境中，4 个后台 Agent 并行调研单家公司的 Token 消耗较大。`investment-lab` 应如何设计调度分级（例如：初筛采用单 Agent + 规则引擎，仅对进入重点观察池的标的触发多视角对抗）？
+   - 在真实投研环境中，多后台 Agent 并行调研单家公司的 Token 消耗较大。`investment-lab` 应如何设计调度分级（例如：初筛采用单 Agent + 规则引擎，仅对进入重点观察池的标的触发多视角对抗）？
 3. **估值模型的多元化适配**：
    - `terminal_value.py` 的 Gordon 永续增长模型适用于稳态成熟期企业。对于科技成长型企业、周期性资源品、生物医药以及金融类资产，如何扩展对应的严谨估值校验规则（如 PS-Growth、SOTP、NAV、重置成本法）？
 
@@ -412,7 +430,7 @@ flowchart TD
 | **指令与全局原则** | `CLAUDE.md` | lines 68–113 | 投研分析最高原则（客观、区分事实与观点、不预设立场、双源交叉验证） |
 | **公司深度研究闭环** | `skills/investment-research.md` | lines 9–34, 55–99, 173–238, 275–315 | A/B/C 偏见评级、数据交叉验算、永续增长 10 年估值审计、15% 抽检准出 |
 | **买入前检查与否决** | `skills/investment-checklist.md` | lines 48–173, 175–204 | 六关 Checklist、镜子测试 5 句话法则、8 条快速一票否决红线 |
-| **财务数据规范** | `skills/financial-data.md` | lines 7–58, 61–98, 120–138 | 美/港/A/台股主备数据源优先级、1% 容差处理阶梯、前/后复权口径规范 |
+| **财务数据规范** | `skills/financial-data.md` | lines 7–58, 61–98, 120–138 | 美/港/A/台股主备数据源优先级、1% 容差政策（1%/1-5%/>5%）、前/后复权口径规范 |
 | **多 Agent 投研团队** | `skills/investment-team.md` | lines 11–18, 34–48, 55–108, 119–144 | 4 大师视角分工、WebSearch 权限预检（防止静默退化）、Team Lead 冲突合成 |
 | **一手财报精读** | `skills/earnings-review.md` | lines 24–42, 94–147, 182–188 | 拒绝二手研报、MD&A 语气与承诺追踪、附注隐藏信息与异常信号排查 |
 | **财报团队与自媒体** | `skills/earnings-team.md` | lines 43–54, 240–285, 287–386 | 6 Agent 财报研判、Team Lead 寻找矛盾点、编辑改写与读者评审流程 |
@@ -423,9 +441,9 @@ flowchart TD
 | **投资论文漂移检测** | `skills/thesis-drift.md` | lines 14–24, 40–67, 92–115, 142–150 | 区分事实/价格/措辞变化、证据归一化、5 维度 Improved/Unchanged/Weakened 判定 |
 | **7 条去劣硬指标** | `skills/quality-screen.md` | lines 24–35, 36–64 | 7 条硬指标（ROE<8%、5年负FCF等）与 3 条豁免规则（投入期/低净利/高周转） |
 | **收益型资产分析** | `skills/income-investment.md` | lines 36–43, 52–78, 93–100 | 分红可持续性分析、行业分部指标（REIT/银行/公用事业）、组合适配检查 |
-| **股价异动快速归因** | `skills/news-pulse.md` | lines 18–32, 54–108 | 4 视角快速情报响应（公司/监管/对手/情绪）、10 分钟快速异动归因 |
-| **精确十进制金融工具** | `tools/financial_rigor.py` | lines 28–38, 74–105, 180–218, 224–295 | `Decimal` 引擎、市值验算、多源交叉对比（容差 2%）、Benford 定律造假检测 |
-| **终值与十年估值工具** | `tools/terminal_value.py` | lines 6–23, 70–72, 124–138, 144–170 | 永续增长模型、分母 $\ge 5\%$ 下限、C1/C2/C3 硬约束审计与敏感性扫描 |
+| **股价异动快速归因** | `skills/news-pulse.md` | lines 18–32, 54–108 | 4 视角快速情报响应（公司/监管/对手/情绪）、TeamCreate 4 Agent 并行异动归因 |
+| **精确十进制金融工具** | `tools/financial_rigor.py` | lines 28–38, 74–105, 180–218, 224–295 | `Decimal` 核心运算（结合 float 格式化与中位数）、市值验算、多源交叉对比（默认 2% 容差）、Benford 检测 |
+| **终值与十年估值工具** | `tools/terminal_value.py` | lines 6–23, 70–72, 124–138, 144–170 | 永续增长模型、横评经验规则（分母 $\ge 5\%$ 下限、C1/C2/C3 硬约束审计与 2026 年国债/ERP 预设） |
 | **报告抽检准出工具** | `tools/report_audit.py` | lines 47–71, 172–244, 246–255, 260–300 | 正则数据点提取、15% 随机抽样算法、1% 容差 PASS/FAIL 判决引擎 |
 | **台股/A股专用工具** | `tools/twstock_data.py`, `tools/ashare_data.py` | `twstock_data.py:1-60`, `ashare_data.py:1-60` | FinMind API 零依赖封装、月营收追踪、腾讯/东财 A 股行情解析 |
 | **跨端同步机制** | `scripts/sync-codex-skills.py` | lines 16–61, 64–90, 92–134 | Claude Code 技能到 Codex Skill 包的单源编译与元数据生成 |
