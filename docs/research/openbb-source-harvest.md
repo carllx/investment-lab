@@ -88,7 +88,7 @@ flowchart TD
    - 若传入不支持的额外参数，`Query` 发出 `OpenBBWarning` 并过滤忽略。
 4. **两层可靠性事实 (Reliability Architecture)**:
    - **Core QueryExecutor 层面**：每次请求单选一个 provider，OpenBB **没有**跨供应商自动降级链（cross-provider fallback chain）；主请求异常时不会自动切换备用源。
-   - **Provider 内部实现层面**：各个 provider 内部可自主实现可靠性机制。例如 pinned 源码中 FRED provider (`openbb_fred/utils/fred_helpers.py`) 实现了 429 自动重试（auto-retry）、指数退避（exponential backoff）、速率限制（rate limiting）、TTL 内存缓存与并发请求去重（single-flight request deduplication）。
+   - **Provider 内部实现层面**：各个 provider 内部可自主实现可靠性机制。例如 pinned 源码中 FRED provider (`openbb_fred/utils/rate_limiter.py`) 实现了 429 自动重试（auto-retry）、指数退避（exponential backoff）、速率限制（rate limiting）、TTL 内存缓存与并发请求去重（single-flight request deduplication）。
    - **重要边界**：`No cross-provider fallback != No provider-level retry`。
 
 [Architecture Capability vs Automatically Guaranteed Behavior]
@@ -273,7 +273,7 @@ OpenBB 将不同层级的 Provider 认证统一抽象于 `Credentials` 模型中
   - `openbb_platform/core/openbb_core/provider/abstract/query_params.py` (QueryParams 基础模型)
   - `openbb_platform/core/openbb_core/provider/query_executor.py` (QueryExecutor 调度逻辑)
   - `openbb_platform/core/openbb_core/provider/registry_map.py` (模型与供应商映射表)
-  - `openbb_platform/providers/fred/openbb_fred/utils/fred_helpers.py` (FRED provider 级 429 backoff / retry 与 session 缓存实现)
+  - `openbb_platform/providers/fred/openbb_fred/utils/rate_limiter.py` (FRED provider 级 429 backoff / retry 与 session 缓存实现)
 - **Standard Models & Representative Providers**:
   - `openbb_platform/core/openbb_core/provider/standard_models/equity_historical.py` (历史行情标准模型)
   - `openbb_platform/providers/yfinance/openbb_yfinance/models/equity_historical.py` (yfinance 历史行情 fetcher)
