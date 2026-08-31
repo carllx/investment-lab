@@ -1,6 +1,6 @@
 # OpenBB — Financial Data Access Guidance for investment-lab
 
-> **Status:** External advisory guidance — candidate Project Source
+> **Status:** Repo-native advisory methodology / research guidance
 >
 > **Canonical primary source:** https://github.com/OpenBB-finance/OpenBB
 >

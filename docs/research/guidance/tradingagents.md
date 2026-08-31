@@ -1,6 +1,6 @@
 # TradingAgents — Multi-Agent Research Guidance for investment-lab
 
-> **Status:** External advisory guidance — candidate Project Source
+> **Status:** Repo-native advisory methodology / research guidance
 >
 > **Canonical primary source:** https://github.com/TauricResearch/TradingAgents
 >
